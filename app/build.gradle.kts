@@ -16,6 +16,16 @@ android {
         versionName = "0.1.0"
     }
     buildFeatures { compose = true }
+
+    // APK Release jest podpisywany kluczem debug wyłącznie dla testów
+    // i dystrybucji poza Google Play. Przed publikacją produkcyjną
+    // należy zastąpić go własnym kluczem przechowywanym jako secret.
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
