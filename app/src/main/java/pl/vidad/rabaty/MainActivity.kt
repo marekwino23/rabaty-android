@@ -104,8 +104,17 @@ fun RabatyHome() {
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val authPrefs = remember { encryptedAuthPreferences(context) }
-    var authToken by remember { mutableStateOf(authPrefs.getString("jwt_token", null).orEmpty()) }
+    // Inicjalizacja szyfrowanego magazynu nie może zamknąć całej aplikacji.
+    // Jeśli Android Keystore zgłosi błąd, aplikacja nadal uruchomi ekran główny.
+    val authPrefs = remember {
+        runCatching { encryptedAuthPreferences(context) }.getOrNull()
+    }
+    var authToken by remember {
+        mutableStateOf(
+            runCatching { authPrefs?.getString("jwt_token", null).orEmpty() }
+                .getOrDefault("")
+        )
+    }
     var authMode by remember { mutableStateOf("login") }
     var authIdentifier by remember { mutableStateOf("") }
     var authPassword by remember { mutableStateOf("") }
@@ -345,7 +354,7 @@ fun RabatyHome() {
                                     Text("Jesteś zalogowany. Sesja jest przechowywana w szyfrowanych preferencjach urządzenia.", color = Muted)
                                     Button(
                                         onClick = {
-                                            authPrefs.edit().remove("jwt_token").apply()
+                                            authPrefs?.edit()?.remove("jwt_token")?.apply()
                                             authToken = ""
                                             authIdentifier = ""
                                             authPassword = ""
@@ -413,7 +422,11 @@ fun RabatyHome() {
                                                             else identifier
                                                         }
                                                         val token = withContext(Dispatchers.IO) { requestJwtToken(loginName, authPassword) }
-                                                        authPrefs.edit().putString("jwt_token", token).apply()
+                                                        val securePrefs = authPrefs
+                                                            ?: throw IllegalStateException(
+                                                                "Nie można bezpiecznie zapisać sesji na tym urządzeniu."
+                                                            )
+                                                        securePrefs.edit().putString("jwt_token", token).apply()
                                                         authToken = token
                                                         authIdentifier = loginName
                                                         authPassword = ""
