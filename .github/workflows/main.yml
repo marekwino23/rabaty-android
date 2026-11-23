@@ -1,4 +1,3 @@
-
 name: Build Android APK
 
 on:
@@ -9,9 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Pobierz kod
+      - name: Pobierz kod projektu
         uses: actions/checkout@v4
 
       - name: Ustaw Java 17
@@ -20,29 +18,39 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Zaakceptuj licencje Android SDK
-        run: yes | sdkmanager --licenses  
-
-      - name: Zainstaluj Gradle
+      - name: Skonfiguruj Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
+      # Ta akcja instaluje Android command-line tools i akceptuje licencje.
+      # Pakiety SDK podajemy jako input, bez wywoływania sdkmanager z PATH.
       - name: Skonfiguruj Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: 'platforms;android-35 build-tools;35.0.0'
 
-      - name: Zainstaluj Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Zbuduj APK debug i release
+        run: |
+          gradle --no-daemon clean assembleDebug assembleRelease
 
-      - name: Sprawdź konfigurację
-        run: gradle --version
+      - name: Sprawdź podpisy APK
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
 
-      - name: Zbuduj APK
-        run: gradle assembleDebug --stacktrace
+      - name: Przygotuj sumy kontrolne
+        run: |
+          cd app/build/outputs/apk
+          sha256sum debug/app-debug.apk release/app-release.apk > SHA256SUMS.txt
 
       - name: Udostępnij APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rabaty-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Rabaty-Android-APK
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/SHA256SUMS.txt
           if-no-files-found: error
