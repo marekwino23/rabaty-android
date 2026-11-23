@@ -2,6 +2,7 @@
 package pl.vidad.rabaty
 
 import android.os.Bundle
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -24,12 +25,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -42,6 +48,12 @@ private const val PRODUCTS_URL =
 
 private const val GROUPS_URL =
     "https://vidad.webd.pl/rabaty/wp-json/rabaty/v1/groups"
+
+private const val JWT_URL =
+    "https://vidad.webd.pl/rabaty/wp-json/jwt-auth/v1/token"
+
+private const val REGISTER_URL =
+    "https://vidad.webd.pl/rabaty/wp-json/rabaty/v1/register"
 
 private val Green = Color(0xFF16794B)
 private val DarkGreen = Color(0xFF153D2C)
@@ -89,6 +101,19 @@ fun RabatyHome() {
     var error by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf("Start") }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val authPrefs = remember { encryptedAuthPreferences(context) }
+    var authToken by remember { mutableStateOf(authPrefs.getString("jwt_token", null).orEmpty()) }
+    var authMode by remember { mutableStateOf("login") }
+    var authIdentifier by remember { mutableStateOf("") }
+    var authPassword by remember { mutableStateOf("") }
+    var authPasswordRepeat by remember { mutableStateOf("") }
+    var authFullName by remember { mutableStateOf("") }
+    var authBusy by remember { mutableStateOf(false) }
+    var authError by remember { mutableStateOf<String?>(null) }
+    var authMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         loading = true
@@ -303,13 +328,11 @@ fun RabatyHome() {
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = Color.White
-                            )
+                            colors = CardDefaults.cardColors(containerColor = Color.White)
                         ) {
                             Column(
                                 Modifier.padding(20.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Icon(
                                     Icons.Default.AccountCircle,
@@ -317,15 +340,111 @@ fun RabatyHome() {
                                     tint = Green,
                                     modifier = Modifier.size(48.dp)
                                 )
-                                Text(
-                                    "Twoje konto",
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    "Logowanie i rejestrację podłączymy w kolejnym etapie.",
-                                    color = Muted
-                                )
+                                if (authToken.isNotBlank()) {
+                                    Text("Twoje konto", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                    Text("Jesteś zalogowany. Sesja jest przechowywana w szyfrowanych preferencjach urządzenia.", color = Muted)
+                                    Button(
+                                        onClick = {
+                                            authPrefs.edit().remove("jwt_token").apply()
+                                            authToken = ""
+                                            authIdentifier = ""
+                                            authPassword = ""
+                                            authMessage = "Wylogowano."
+                                            authError = null
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Green)
+                                    ) { Text("Wyloguj się") }
+                                } else {
+                                    Text(if (authMode == "login") "Zaloguj się" else "Utwórz konto", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                    if (authMode == "register") {
+                                        OutlinedTextField(
+                                            value = authFullName,
+                                            onValueChange = { authFullName = it },
+                                            label = { Text("Imię i nazwisko") },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                    OutlinedTextField(
+                                        value = authIdentifier,
+                                        onValueChange = { authIdentifier = it },
+                                        label = { Text("E-mail lub nazwa użytkownika") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = authPassword,
+                                        onValueChange = { authPassword = it },
+                                        label = { Text("Hasło") },
+                                        singleLine = true,
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    if (authMode == "register") {
+                                        OutlinedTextField(
+                                            value = authPasswordRepeat,
+                                            onValueChange = { authPasswordRepeat = it },
+                                            label = { Text("Powtórz hasło") },
+                                            singleLine = true,
+                                            visualTransformation = PasswordVisualTransformation(),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                    authError?.let { Text(it, color = Color.Red, fontSize = 13.sp) }
+                                    authMessage?.let { Text(it, color = Green, fontSize = 13.sp) }
+                                    Button(
+                                        onClick = {
+                                            authError = null
+                                            authMessage = null
+                                            val identifier = authIdentifier.trim()
+                                            if (identifier.isBlank() || authPassword.isBlank()) {
+                                                authError = "Wpisz e-mail/login i hasło."
+                                            } else if (authMode == "register" &&
+                                                (authFullName.isBlank() || authPassword.length < 8 || authPassword != authPasswordRepeat)
+                                            ) {
+                                                authError = "Podaj imię i nazwisko, hasło min. 8 znaków oraz identyczne powtórzenie hasła."
+                                            } else {
+                                                scope.launch {
+                                                    authBusy = true
+                                                    try {
+                                                        val loginName = withContext(Dispatchers.IO) {
+                                                            if (authMode == "register") registerWordPressUser(authFullName.trim(), identifier, authPassword)
+                                                            else identifier
+                                                        }
+                                                        val token = withContext(Dispatchers.IO) { requestJwtToken(loginName, authPassword) }
+                                                        authPrefs.edit().putString("jwt_token", token).apply()
+                                                        authToken = token
+                                                        authIdentifier = loginName
+                                                        authPassword = ""
+                                                        authPasswordRepeat = ""
+                                                        authMessage = "Zalogowano pomyślnie."
+                                                    } catch (e: Exception) {
+                                                        authError = e.message ?: "Nie udało się wykonać operacji."
+                                                    } finally {
+                                                        authBusy = false
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        enabled = !authBusy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Green)
+                                    ) {
+                                        if (authBusy) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                                        else Text(if (authMode == "login") "Zaloguj się" else "Zarejestruj i zaloguj")
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            authMode = if (authMode == "login") "register" else "login"
+                                            authError = null
+                                            authMessage = null
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(if (authMode == "login") "Nie masz konta? Zarejestruj się" else "Masz już konto? Zaloguj się", color = Green)
+                                    }
+                                }
                             }
                         }
                     }
@@ -530,6 +649,56 @@ private fun EmptyMessage(message: String) {
         color = Muted,
         modifier = Modifier.padding(vertical = 12.dp)
     )
+}
+
+private fun encryptedAuthPreferences(context: Context) =
+    EncryptedSharedPreferences.create(
+        context,
+        "rabaty_secure_auth",
+        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
+
+private fun requestJwtToken(username: String, password: String): String {
+    val response = postJson(JWT_URL, JSONObject().put("username", username).put("password", password))
+    return response.optString("token").takeIf { it.isNotBlank() }
+        ?: throw IllegalStateException(response.optString("message", "WordPress nie zwrócił tokenu JWT."))
+}
+
+private fun registerWordPressUser(fullName: String, email: String, password: String): String {
+    val response = postJson(
+        REGISTER_URL,
+        JSONObject().put("name", fullName).put("email", email).put("password", password)
+    )
+    return response.optString("user_login").takeIf { it.isNotBlank() }
+        ?: throw IllegalStateException(response.optString("message", "Nie udało się utworzyć konta."))
+}
+
+private fun postJson(address: String, payload: JSONObject): JSONObject {
+    val connection = (URL(address).openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        connectTimeout = 15000
+        readTimeout = 15000
+        doOutput = true
+        setRequestProperty("Accept", "application/json")
+        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+    }
+    try {
+        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val json = try { JSONObject(body) } catch (_: Exception) {
+            JSONObject().put("message", body.ifBlank { "Błąd serwera HTTP $code" })
+        }
+        if (code !in 200..299) {
+            throw IllegalStateException(json.optString("message").ifBlank { "Błąd serwera HTTP $code" })
+        }
+        return json
+    } finally {
+        connection.disconnect()
+    }
 }
 
 private fun fetchProducts(): List<StoreProduct> {
