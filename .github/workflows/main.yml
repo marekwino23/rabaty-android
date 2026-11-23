@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Pobierz kod projektu
+      - name: Pobierz kod
         uses: actions/checkout@v4
 
       - name: Ustaw Java 17
@@ -20,23 +20,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Skonfiguruj Gradle
+      - name: Zainstaluj Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
       - name: Skonfiguruj Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: ''
 
-      - name: Zainstaluj Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Zainstaluj SDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses
+
+      - name: Sprawdź konfigurację
+        run: gradle --version
 
       - name: Zbuduj APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug --stacktrace
 
-      - name: Udostępnij plik APK
+      - name: Udostępnij APK
         uses: actions/upload-artifact@v4
         with:
           name: Rabaty-APK
